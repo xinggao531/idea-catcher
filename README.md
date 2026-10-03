@@ -2,7 +2,7 @@
 
 A voice notebook for iPhone. Tap the mic, say what's on your mind while walking the dog, and it's saved with a timestamp, cleaned up and filed into the right project. Screenshots get pinned to a per-project whiteboard.
 
-**Open on your iPhone:** https://xinggao531.github.io/lullaby-for-a-fire-spirit/idea-catcher/ (live once this folder is on `main`), then Safari › Share › **Add to Home Screen**. It opens full screen from its icon, like an app.
+**Open on your iPhone:** https://xinggao531.github.io/idea-catcher/ (after GitHub Pages is turned on for this repo), then Safari › Share › **Add to Home Screen**. It opens full screen from its icon, like an app.
 
 ## What it does
 
@@ -35,7 +35,7 @@ Each note costs one small Claude request (model `claude-opus-5-5`, low effort), 
 | `sw.js`, `manifest.webmanifest`, `icons/` | Home Screen install and offline support |
 | `vendor/anthropic-sdk.js` | The official `@anthropic-ai/sdk`, bundled for the browser with esbuild |
 
-There's no build step. To try it on a computer, serve the folder (for example `python3 -m http.server` inside `idea-catcher/`) and open `http://localhost:8000`.
+There's no build step. To try it on a computer, serve the folder (for example `python3 -m http.server` in the repo root) and open `http://localhost:8000`.
 
 ## Limits
 
