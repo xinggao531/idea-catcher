@@ -1,8 +1,8 @@
 // Offline support: the app shell is cached so the app opens (and records notes)
 // with no signal. Notes captured offline are filed by keywords and can be
-// re-sorted with Claude later from Settings.
+// re-sorted with AI later from Settings.
 
-const CACHE = 'idea-catcher-v1';
+const CACHE = 'idea-catcher-v2';
 const SHELL = [
   './',
   'index.html',
