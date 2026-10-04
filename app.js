@@ -1,5 +1,6 @@
 import * as db from './db.js';
-import { CATEGORIES, KINDS, categoryById, hasKey, organizeWithClaude, organizeOffline } from './ai.js';
+import { CATEGORIES, KINDS, categoryById, organizeOffline } from './ai.js';
+import { PROVIDERS, aiName, getKey, getModel, getProvider, hasKey, listModels, organizeWithAI, setKey, setModel, setProvider, suggestModel } from './ai.js';
 
 const PENDING = '__pending';
 const app = document.getElementById('app');
@@ -160,11 +161,11 @@ async function sortText({ text, imageBlob, createdAt, projects }) {
   if (hasKey() && navigator.onLine) {
     try {
       const image = imageBlob ? { base64: await blobToBase64(imageBlob), mediaType: imageBlob.type || 'image/jpeg' } : null;
-      const items = await organizeWithClaude({ text, image, projects, when: new Date(createdAt) });
-      return { items, by: 'claude' };
+      const items = await organizeWithAI({ text, image, projects, when: new Date(createdAt) });
+      return { items, by: 'ai' };
     } catch (e) {
       console.error(e);
-      toast(`Couldn't reach Claude (${e.message || e}). Filed by keywords for now.`, 4000);
+      toast(`Couldn't reach ${PROVIDERS[getProvider()].short} (${e.message || e}). Filed by keywords for now.`, 5000);
     }
   }
   return { items: organizeOffline({ text: text || 'Screenshot', projects }), by: 'keywords' };
@@ -214,15 +215,15 @@ async function fileNote(pending) {
         organizedBy: by,
       });
     }
-    toast(`Filed under ${[...names].join(', ')}${by === 'claude' ? ' ✨' : ''}`);
+    toast(`Filed under ${[...names].join(', ')}${by === 'ai' ? ' ✨' : ''}`);
   } finally {
     setBusy(false);
     render();
   }
 }
 
-// Re-sort notes that were filed by keywords (no key / offline at the time).
-async function resortWithClaude() {
+// Re-sort notes that were filed by keywords (no key / offline at the time) with the chosen AI.
+async function resortWithAI() {
   const notes = (await db.getAll('notes')).filter((n) => n.organizedBy === 'keywords');
   const images = (await db.getAll('images')).filter((i) => i.organizedBy === 'keywords');
   if (!notes.length && !images.length) return toast('Nothing to re-sort.');
@@ -232,7 +233,7 @@ async function resortWithClaude() {
     const projects = await db.getAll('projects');
     const autoProjects = new Set();
     for (const n of notes) {
-      const items = await organizeWithClaude({ text: n.raw || n.text, projects, when: new Date(n.createdAt) });
+      const items = await organizeWithAI({ text: n.raw || n.text, projects, when: new Date(n.createdAt) });
       autoProjects.add(n.projectId);
       for (const [i, item] of items.entries()) {
         const project = await resolveProject(item, projects);
@@ -244,13 +245,13 @@ async function resortWithClaude() {
           text: item.note,
           kind: item.kind,
           tags: item.tags,
-          organizedBy: 'claude',
+          organizedBy: 'ai',
         });
       }
       done++;
     }
     for (const img of images) {
-      const items = await organizeWithClaude({
+      const items = await organizeWithAI({
         text: '',
         image: { base64: await blobToBase64(img.blob), mediaType: img.blob.type || 'image/jpeg' },
         projects,
@@ -258,7 +259,7 @@ async function resortWithClaude() {
       });
       autoProjects.add(img.projectId);
       const project = await resolveProject(items[0], projects);
-      await db.put('images', { ...img, projectId: project.id, caption: items[0].title, description: items[0].note, organizedBy: 'claude' });
+      await db.put('images', { ...img, projectId: project.id, caption: items[0].title, description: items[0].note, organizedBy: 'ai' });
       done++;
     }
     // Drop keyword "inbox" projects that are now empty.
@@ -513,7 +514,7 @@ async function captureView() {
     { class: 'view capture' },
     header('Idea Catcher', h('a', { class: 'icon', href: '#/search', 'aria-label': 'Search' }, '🔍')),
     !hasKey() &&
-      h('a', { class: 'banner', href: '#/settings' }, 'Add a Claude API key in Settings to have notes sorted into projects automatically. Until then they are filed by keywords.'),
+      h('a', { class: 'banner', href: '#/settings' }, 'Connect Claude, ChatGPT or Gemini in Settings to have notes sorted into projects automatically. Until then they are filed by keywords.'),
     h('section', { class: 'recorder' }, mic, status),
     textarea,
     preview,
@@ -962,8 +963,113 @@ async function searchView() {
 
 // ---------- settings ----------
 
+const cachedModels = (p) => {
+  if (PROVIDERS[p].models) return PROVIDERS[p].models;
+  try {
+    return JSON.parse(localStorage.getItem(`ic.models.${p}`)) || [];
+  } catch {
+    return [];
+  }
+};
+
+// Pick the AI provider, its key and its model.
+function aiSection(keywordCount) {
+  const p = getProvider();
+  const info = PROVIDERS[p];
+
+  const providerPicker = h(
+    'div',
+    { class: 'tabs', role: 'radiogroup', 'aria-label': 'AI provider' },
+    Object.entries(PROVIDERS).map(([id, prov]) =>
+      h(
+        'button',
+        {
+          class: `tab ${id === p ? 'active' : ''}`,
+          role: 'radio',
+          'aria-checked': id === p ? 'true' : 'false',
+          onclick: () => {
+            setProvider(id);
+            render();
+          },
+        },
+        prov.short
+      )
+    )
+  );
+
+  const keyInput = h('input', { type: 'password', autocomplete: 'off', placeholder: info.keyHint, value: getKey(p), 'aria-label': `${info.short} API key` });
+
+  const models = cachedModels(p);
+  const current = getModel(p);
+  const modelSelect = h(
+    'select',
+    { 'aria-label': 'Model', onchange: (e) => setModel(p, e.target.value) },
+    !models.length && h('option', { value: '' }, getKey(p) ? 'Tap “Save” to load models' : 'Add a key to load models'),
+    models.map((m) => h('option', { value: m.id, selected: m.id === current }, m.label)),
+    current && !models.some((m) => m.id === current) ? h('option', { value: current, selected: true }, current) : null
+  );
+  const customModel = h('input', {
+    type: 'text',
+    placeholder: 'Or type a model ID',
+    autocapitalize: 'off',
+    autocorrect: 'off',
+    spellcheck: false,
+    'aria-label': 'Model ID',
+  });
+
+  const save = async () => {
+    const key = keyInput.value.trim();
+    setKey(p, key);
+    if (!key) {
+      toast('Key removed');
+      return render();
+    }
+    if (customModel.value.trim()) setModel(p, customModel.value.trim());
+    if (!info.models) {
+      // Load the models this key can use, which also checks the key works.
+      try {
+        const list = await listModels(p, key);
+        localStorage.setItem(`ic.models.${p}`, JSON.stringify(list));
+        if (!getModel(p) || !list.some((m) => m.id === getModel(p))) {
+          if (!customModel.value.trim()) setModel(p, suggestModel(p, list));
+        }
+        toast(`Key saved · ${list.length} models available`);
+      } catch (e) {
+        toast(`Key saved, but the model list failed to load: ${e.message}. You can type a model ID instead.`, 6000);
+      }
+    } else {
+      toast('Key saved');
+    }
+    render();
+  };
+
+  return h(
+    'section',
+    { class: 'card-section' },
+    h('h2', {}, 'AI that sorts your notes'),
+    providerPicker,
+    h('label', { class: 'small muted' }, `${info.label} API key`),
+    keyInput,
+    h('label', { class: 'small muted' }, 'Model'),
+    modelSelect,
+    !info.models && customModel,
+    h(
+      'p',
+      { class: 'muted small' },
+      `Used to sort notes into projects, clean up dictation and read screenshots. The key is stored only on this phone and sent only to ${info.label.match(/\((.*)\)/)[1]}. Get one at ${info.keyUrl}. Each note is one small request billed to your key.`
+    ),
+    h(
+      'div',
+      { class: 'row' },
+      h('button', { class: 'primary', onclick: save }, 'Save'),
+      !info.models && getKey(p) ? h('button', { class: 'secondary', onclick: save }, '↻ Refresh models') : null,
+      keywordCount && hasKey() ? h('button', { class: 'secondary', onclick: resortWithAI }, `Re-sort ${keywordCount} with ${PROVIDERS[p].short}`) : null
+    ),
+    hasKey() && h('p', { class: 'small' }, `Now sorting with ${aiName()}.`)
+  );
+}
+
 async function settingsView() {
-  const keyInput = h('input', { type: 'password', autocomplete: 'off', placeholder: 'sk-ant-…', value: localStorage.getItem('ic.apiKey') || '' });
   const keywordCount =
     (await db.getAll('notes')).filter((n) => n.organizedBy === 'keywords').length +
     (await db.getAll('images')).filter((i) => i.organizedBy === 'keywords').length;
@@ -980,32 +1086,7 @@ async function settingsView() {
         h('h2', {}, 'Put it on your Home Screen'),
         h('ol', {}, h('li', {}, 'Open this page in Safari.'), h('li', {}, 'Tap the Share button, then “Add to Home Screen”.'), h('li', {}, 'Open Idea Catcher from its icon; it runs full screen like an app.'))
       ),
-    h(
-      'section',
-      { class: 'card-section' },
-      h('h2', {}, 'Claude API key'),
-      h('p', { class: 'muted small' }, 'Used to sort notes into projects, clean up dictation and read screenshots. It is stored only on this phone and sent only to Anthropic. Get one at console.anthropic.com.'),
-      keyInput,
-      h(
-        'div',
-        { class: 'row' },
-        h(
-          'button',
-          {
-            class: 'primary',
-            onclick: () => {
-              const v = keyInput.value.trim();
-              if (v) localStorage.setItem('ic.apiKey', v);
-              else localStorage.removeItem('ic.apiKey');
-              toast(v ? 'Key saved' : 'Key removed');
-              render();
-            },
-          },
-          'Save key'
-        ),
-        keywordCount && hasKey() ? h('button', { class: 'secondary', onclick: resortWithClaude }, `Re-sort ${keywordCount} with Claude`) : null
-      )
-    ),
+    aiSection(keywordCount),
     h(
       'section',
       { class: 'card-section' },
